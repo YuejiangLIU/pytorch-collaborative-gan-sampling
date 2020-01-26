@@ -29,18 +29,19 @@ def parse_args():
 	parser.add_argument('--scale', type=float, default=10., help='data scaling')
 	parser.add_argument('--ratio', type=float, default=0.9, help='ratio of imbalance')
 	# stage
-	parser.add_argument('--mode', type=str, default='train',
-						help='type of running: train, shape, calibrate, test')
+	parser.add_argument('--mode', type=str, default='refine',
+						help='type of running: train, shape, calibrate, refine')
 	parser.add_argument('--method', type=str, default='standard',
 						help='type of running: standard, refinement, rejection, hastings, benchmark')
 	# sampling
-	parser.add_argument('--ckpt_num', type=int, default=0, help='ckpt number')
+	parser.add_argument('--ckpt_num', type=int, default=5000, help='ckpt number')
 	parser.add_argument('--rollout_rate', type=float, default=0.1, help='rollout rate')
-	parser.add_argument('--rollout_method', type=str, default='ladam')
+	# parser.add_argument('--rollout_method', type=str, default='ladam')
 	parser.add_argument('--rollout_steps', type=int, default=50)
 	# misc
 	parser.add_argument('--seed', type=int, help='manual seed')
-	parser.add_argument('--out_dir', default='./out', help='folder to output')
+	parser.add_argument('--out_dir', type=str, default='./out', help='folder to output')
+	parser.add_argument('--ckpt_dir', type=str, default='./ckpt', help='folder to output')
 	return parser.parse_args()
 
 args = parse_args()
@@ -49,7 +50,11 @@ print(args)
 # folders
 try:
 	os.makedirs(args.out_dir)
-except OSError:
+except OSError as err:
+	pass
+try:
+	os.makedirs(args.ckpt_dir)
+except OSError as err:
 	pass
 
 # seeds
@@ -72,63 +77,95 @@ device = torch.device("cuda" if cuda else "cpu")
 generator = Generator(args.nhidden).to(device)
 discriminator = Discriminator(args.nhidden).to(device)
 
-# TODO: load
-print(generator)
-print(discriminator)
+# load
+try:
+	generator.load_state_dict(torch.load("%s/generator_%d.pth" % (args.ckpt_dir, args.ckpt_num)))
+	discriminator.load_state_dict(torch.load("%s/discriminator_%d.pth" % (args.ckpt_dir, args.ckpt_num)))
+except Exception as e:
+	raise e
+	args.ckpt_num = 0
 
+# data
 noise = NoiseDataset()
 data = ToyDataset(distr=args.dataset, scale=args.scale, ratio=args.ratio)
 
+# ground truth
 real_batch = data.next_batch(args.batch_size).to(device)
 draw_sample(None, real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_real.png'))
 
-# training 
 criterion = nn.BCELoss()
 optim_g = optim.SGD(generator.parameters(), lr=args.lrg)
 optim_d = optim.SGD(discriminator.parameters(), lr=args.lrd)
-# optim_g = optim.Adam(generator.parameters(), lr=args.lrg, betas=(0.5, 0.999))
-# optim_d = optim.Adam(discriminator.parameters(), lr=args.lrd, betas=(0.5, 0.999))
 
-for i in range(args.niter):
+# training
+if args.mode == "train":
+	for i in range(args.ckpt_num, args.niter):
 
-	############################
-	# Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-	###########################
-	discriminator.zero_grad()
+		############################
+		# Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+		###########################
+		discriminator.zero_grad()
 
-	# train with real
-	real_batch = data.next_batch(args.batch_size).to(device)
+		# train with real
+		real_batch = data.next_batch(args.batch_size).to(device)
+		label = torch.full((args.batch_size,), 1, device=device)
+		output = discriminator(real_batch)
+		loss_d_real = criterion(output, label)
+		loss_d_real.backward()
+
+		# train with fake
+		noise_batch = noise.next_batch(args.batch_size).to(device)
+		fake_batch = generator(noise_batch)
+		label.fill_(0)
+
+		output = discriminator(fake_batch.detach())
+		loss_d_fake = criterion(output, label)
+		loss_d_fake.backward()
+
+		loss_d = loss_d_real + loss_d_fake
+		optim_d.step()
+
+		############################
+		# Update G network: maximize log(D(G(z)))
+		###########################
+		generator.zero_grad()
+
+		label.fill_(1)  # fake labels are real for generator cost
+		output = discriminator(fake_batch)
+		loss_g = criterion(output, label)
+		loss_g.backward()
+
+		optim_g.step()
+
+		if i % 1000 == 0:
+			# Display samples
+			print('[%d/%d] Loss_D: %.4f Loss_G: %.4f'
+				% (i, args.niter, loss_d.item(), loss_g.item()))
+			draw_sample(fake_batch.detach().numpy(), real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_fake_{:05d}.png'.format(i)))
+			# Save model checkpoints
+			torch.save(generator.state_dict(), "%s/generator_%d.pth" % (args.ckpt_dir, i))
+			torch.save(discriminator.state_dict(), "%s/discriminator_%d.pth" % (args.ckpt_dir, i))
+
+# refine
+if args.mode == "refine":
+
+	delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True)
+	optim_r = optim.Adam([delta_refine], lr=args.rollout_rate)
 	label = torch.full((args.batch_size,), 1, device=device)
-	output = discriminator(real_batch)
-	loss_d_real = criterion(output, label)
-	loss_d_real.backward()
 
-	# train with fake
 	noise_batch = noise.next_batch(args.batch_size).to(device)
 	fake_batch = generator(noise_batch)
-	label.fill_(0)
 
-	output = discriminator(fake_batch.detach())
-	loss_d_fake = criterion(output, label)
-	loss_d_fake.backward()
+	for k in range(args.rollout_steps):
 
-	loss_d = loss_d_real + loss_d_fake
-	optim_d.step()
+		optim_r.zero_grad()
 
-	############################
-	# (2) Update G network: maximize log(D(G(z)))
-	###########################
-	generator.zero_grad()
+		label.fill_(1)  # fake labels are real for generator cost
+		output = discriminator(fake_batch.detach() + delta_refine)
+		loss_r = criterion(output, label)
+		loss_r.backward()
 
-	label.fill_(1)  # fake labels are real for generator cost
-	output = discriminator(fake_batch)
-	loss_g = criterion(output, label)
-	loss_g.backward()
-
-	optim_g.step()
-
-	if i % 1000 == 0:
-		print('[%d/%d] Loss_D: %.4f Loss_G: %.4f'
-			% (i, args.niter, loss_d.item(), loss_g.item()))
-		draw_sample(fake_batch.detach().numpy(), real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_fake_{:05d}.png'.format(i)))
-		# import pdb; pdb.set_trace()
+		optim_r.step()
+	
+	print(delta_refine)
+	draw_sample((fake_batch+delta_refine).detach().numpy(), real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_refine_{:05d}.png'.format(args.ckpt_num)))

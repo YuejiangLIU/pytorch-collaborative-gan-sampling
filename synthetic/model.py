@@ -50,3 +50,4 @@ class Discriminator(nn.Module):
     def forward(self, ipt):
         opt = self.block(ipt)
         return opt.squeeze()
+
