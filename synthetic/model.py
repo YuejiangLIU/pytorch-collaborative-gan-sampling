@@ -7,12 +7,19 @@ class Generator(nn.Module):
         super(Generator, self).__init__()
         self.block = nn.Sequential(
             nn.Linear(2, nhidden),
+            nn.BatchNorm1d(nhidden),
             nn.ReLU(True),
             nn.Linear(nhidden, nhidden),
+            nn.BatchNorm1d(nhidden),
             nn.ReLU(True),
             nn.Linear(nhidden, nhidden),
+            nn.BatchNorm1d(nhidden),
             nn.ReLU(True),
             nn.Linear(nhidden, nhidden),
+            nn.BatchNorm1d(nhidden),
+            nn.ReLU(True),
+            nn.Linear(nhidden, nhidden),
+            nn.BatchNorm1d(nhidden),
             nn.ReLU(True),
             nn.Linear(nhidden, 2),
         )
@@ -27,6 +34,8 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
         self.block = nn.Sequential(
             nn.Linear(2, nhidden),
+            nn.ReLU(True),
+            nn.Linear(nhidden, nhidden),
             nn.ReLU(True),
             nn.Linear(nhidden, nhidden),
             nn.ReLU(True),
