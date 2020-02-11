@@ -24,24 +24,23 @@ def parse_args():
 	parser.add_argument('--lrd', type=float, default=1e-2, help='lr for D')
 	parser.add_argument('--niter', type=int, default=10001, help='number of iterations')
 	# dataset
-	parser.add_argument('--dataset', type=str, default='Imbal-8Gaussians',
+	parser.add_argument('--dataset', type=str, default="Imbal-8Gaussians",
 						help='dataset to use: 8Gaussians | 25Gaussians | swissroll | mnist')
 	parser.add_argument('--scale', type=float, default=10., help='data scaling')
 	parser.add_argument('--ratio', type=float, default=0.9, help='ratio of imbalance')
 	# stage
-	parser.add_argument('--mode', type=str, default='refine',
+	parser.add_argument('--mode', type=str, default="refine",
 						help='type of running: train, shape, calibrate, refine')
-	parser.add_argument('--method', type=str, default='standard',
+	parser.add_argument('--method', type=str, default="standard",
 						help='type of running: standard, refinement, rejection, hastings, benchmark')
 	# sampling
 	parser.add_argument('--ckpt_num', type=int, default=5000, help='ckpt number')
 	parser.add_argument('--rollout_rate', type=float, default=0.1, help='rollout rate')
-	# parser.add_argument('--rollout_method', type=str, default='ladam')
 	parser.add_argument('--rollout_steps', type=int, default=50)
 	# misc
 	parser.add_argument('--seed', type=int, help='manual seed')
-	parser.add_argument('--out_dir', type=str, default='./out', help='folder to output')
-	parser.add_argument('--ckpt_dir', type=str, default='./ckpt', help='folder to output')
+	parser.add_argument('--out_dir', type=str, default="./out", help='folder to output')
+	parser.add_argument('--ckpt_dir', type=str, default="./ckpt", help='folder to output')
 	return parser.parse_args()
 
 args = parse_args()
@@ -95,11 +94,13 @@ draw_sample(None, real_batch.cpu().numpy(), args.scale, os.path.join(args.out_di
 draw_kde(real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_real.png'))
 
 criterion = nn.BCELoss()
-optim_g = optim.SGD(generator.parameters(), lr=args.lrg)
-optim_d = optim.SGD(discriminator.parameters(), lr=args.lrd)
 
-# training
+# train
 if args.mode == "train":
+	
+	optim_g = optim.SGD(generator.parameters(), lr=args.lrg)
+	optim_d = optim.SGD(discriminator.parameters(), lr=args.lrd)
+
 	for i in range(args.ckpt_num, args.niter):
 
 		############################
@@ -150,22 +151,17 @@ if args.mode == "train":
 # refine
 if args.mode == "refine":
 
-	delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True, device=device)
-	optim_r = optim.Adam([delta_refine], lr=args.rollout_rate)
-	label = torch.full((args.batch_size,), 1, device=device)
-
 	noise_batch = noise.next_batch(args.batch_size).to(device)
 	fake_batch = generator(noise_batch)
 
+	delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True, device=device)
+	optim_r = optim.Adam([delta_refine], lr=args.rollout_rate)
+	label = torch.full((args.batch_size,), 1, device=device)
 	for k in range(args.rollout_steps):
-
 		optim_r.zero_grad()
-
-		label.fill_(1)  # fake labels are real for generator cost
 		output = discriminator(fake_batch.detach() + delta_refine)
 		loss_r = criterion(output, label)
 		loss_r.backward()
-
 		optim_r.step()
 	
 	draw_sample(fake_batch.detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_propose_{:05d}.png'.format(args.ckpt_num)))
@@ -173,3 +169,65 @@ if args.mode == "refine":
 	
 	draw_sample((fake_batch+delta_refine).detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_refine_{:05d}.png'.format(args.ckpt_num)))
 	draw_kde((fake_batch+delta_refine).detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_refine_{:05d}.png'.format(args.ckpt_num)))
+
+# shape
+if args.mode == "shape":
+	
+	optim_d = optim.SGD(discriminator.parameters(), lr=args.lrd)
+
+	for i in range(args.niter):
+
+		# synthesize refined samples
+		noise_batch = noise.next_batch(args.batch_size).to(device)
+		fake_batch = generator(noise_batch)
+
+		# probabilistic refinement
+		proba_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=False, device=device)
+		proba_steps = torch.LongTensor(args.batch_size,1).random_() % args.rollout_steps
+		proba_steps_one_hot = torch.LongTensor(args.batch_size, args.rollout_steps)
+		proba_steps_one_hot.zero_()
+		proba_steps_one_hot.scatter_(1, proba_steps, 1)
+
+		delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True, device=device)
+		optim_r = optim.Adam([delta_refine], lr=args.rollout_rate)
+		label = torch.full((args.batch_size,), 1, device=device)
+		for k in range(args.rollout_steps):
+			optim_r.zero_grad()
+			output = discriminator(fake_batch.detach() + delta_refine)
+			loss_r = criterion(output, label)
+			loss_r.backward()
+			optim_r.step()
+
+			# probabilistic assignment
+			proba_refine[proba_steps_one_hot[:,k] == 1, :] = delta_refine[proba_steps_one_hot[:,k] == 1, :]
+
+		############################
+		# Shape D network: maximize log(D(x)) + log(1 - D(R(G(z))))
+		###########################
+		optim_d.zero_grad()
+
+		# train with real
+		real_batch = data.next_batch(args.batch_size).to(device)
+		output = discriminator(real_batch)
+		loss_d_real = criterion(output, label)
+		loss_d_real.backward()
+
+		# train with refined
+		label.fill_(0)
+		output = discriminator((fake_batch+proba_refine).detach())
+		loss_d_fake = criterion(output, label)
+		loss_d_fake.backward()
+
+		loss_d = loss_d_real + loss_d_fake
+		optim_d.step()
+
+		if i % 500 == 0:
+			# Display samples
+			print('[%d/%d] Loss_D: %.4f'
+				% (i, args.niter, loss_d.item()))
+			# refined samples
+			draw_sample((fake_batch+delta_refine).detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_refine_{:04d}_shape_{:04d}.png'.format(args.ckpt_num, i)))
+			draw_kde((fake_batch+delta_refine).detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_refine_{:04d}_shape_{:04d}.png'.format(args.ckpt_num, i)))
+			# shaping samples
+			draw_sample((fake_batch+proba_refine).detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_proba_{:04d}_shape_{:04d}.png'.format(args.ckpt_num, i)))
+			draw_kde((fake_batch+proba_refine).detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_proba_{:04d}_shape_{:04d}.png'.format(args.ckpt_num, i)))
