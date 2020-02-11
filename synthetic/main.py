@@ -82,7 +82,7 @@ try:
 	generator.load_state_dict(torch.load("%s/generator_%d.pth" % (args.ckpt_dir, args.ckpt_num)))
 	discriminator.load_state_dict(torch.load("%s/discriminator_%d.pth" % (args.ckpt_dir, args.ckpt_num)))
 except Exception as e:
-	raise e
+	print('Failed to load ckpt. ',e)
 	args.ckpt_num = 0
 
 # data
@@ -91,7 +91,8 @@ data = ToyDataset(distr=args.dataset, scale=args.scale, ratio=args.ratio)
 
 # ground truth
 real_batch = data.next_batch(args.batch_size).to(device)
-draw_sample(None, real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_real.png'))
+draw_sample(None, real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_real.png'))
+draw_kde(real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_real.png'))
 
 criterion = nn.BCELoss()
 optim_g = optim.SGD(generator.parameters(), lr=args.lrg)
@@ -141,7 +142,7 @@ if args.mode == "train":
 			# Display samples
 			print('[%d/%d] Loss_D: %.4f Loss_G: %.4f'
 				% (i, args.niter, loss_d.item(), loss_g.item()))
-			draw_sample(fake_batch.detach().numpy(), real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_fake_{:05d}.png'.format(i)))
+			draw_sample(fake_batch.detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_fake_{:05d}.png'.format(i)))
 			# Save model checkpoints
 			torch.save(generator.state_dict(), "%s/generator_%d.pth" % (args.ckpt_dir, i))
 			torch.save(discriminator.state_dict(), "%s/discriminator_%d.pth" % (args.ckpt_dir, i))
@@ -149,7 +150,7 @@ if args.mode == "train":
 # refine
 if args.mode == "refine":
 
-	delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True)
+	delta_refine = torch.zeros([args.batch_size, 2], dtype=torch.float32, requires_grad=True, device=device)
 	optim_r = optim.Adam([delta_refine], lr=args.rollout_rate)
 	label = torch.full((args.batch_size,), 1, device=device)
 
@@ -167,5 +168,8 @@ if args.mode == "refine":
 
 		optim_r.step()
 	
-	print(delta_refine)
-	draw_sample((fake_batch+delta_refine).detach().numpy(), real_batch.numpy(), args.scale, os.path.join(args.out_dir, 'batch_refine_{:05d}.png'.format(args.ckpt_num)))
+	draw_sample(fake_batch.detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_propose_{:05d}.png'.format(args.ckpt_num)))
+	draw_kde(fake_batch.detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_propose_{:05d}.png'.format(args.ckpt_num)))
+	
+	draw_sample((fake_batch+delta_refine).detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_refine_{:05d}.png'.format(args.ckpt_num)))
+	draw_kde((fake_batch+delta_refine).detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_refine_{:05d}.png'.format(args.ckpt_num)))

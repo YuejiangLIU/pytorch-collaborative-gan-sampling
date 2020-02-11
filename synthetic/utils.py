@@ -21,7 +21,7 @@ def draw_sample(model_batch, real_batch, scale, fname, color=None):
     ax.spines['top'].set_color('0.5')
     ax.spines['right'].set_color('0.5')
     ax.spines['left'].set_color('0.5')
-    plt.savefig(fname, bbox_inches='tight', pad_inches=0, transparent=False)
+    plt.savefig(fname, bbox_inches='tight', pad_inches=0)
     plt.close(fig)
 
 
