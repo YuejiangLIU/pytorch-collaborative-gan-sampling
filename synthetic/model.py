@@ -21,7 +21,7 @@ class Generator(nn.Module):
             nn.Linear(nhidden, nhidden),
             nn.BatchNorm1d(nhidden),
             nn.ReLU(True),
-            nn.Linear(nhidden, 2),
+            nn.Linear(nhidden, 2)
         )
 
     def forward(self, ipt):
@@ -43,8 +43,7 @@ class Discriminator(nn.Module):
             nn.ReLU(True),
             nn.Linear(nhidden, nhidden),
             nn.ReLU(True),
-            nn.Linear(nhidden, 1),
-            nn.Sigmoid(),
+            nn.Linear(nhidden, 1)
         )
 
     def forward(self, ipt):

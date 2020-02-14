@@ -34,11 +34,11 @@ def parse_args():
 	parser.add_argument('--method', type=str, default="standard",
 						help='type of running: standard, refinement, rejection, hastings, benchmark')
 	# sampling
-	parser.add_argument('--ckpt_num', type=int, default=5000, help='ckpt number')
+	parser.add_argument('--ckpt_num', type=int, default=0, help='ckpt number')
 	parser.add_argument('--rollout_rate', type=float, default=0.1, help='rollout rate')
 	parser.add_argument('--rollout_steps', type=int, default=50)
 	# misc
-	parser.add_argument('--seed', type=int, help='manual seed')
+	parser.add_argument('--seed', type=int, default=2020, help='manual seed')
 	parser.add_argument('--out_dir', type=str, default="./out", help='folder to output')
 	parser.add_argument('--ckpt_dir', type=str, default="./ckpt", help='folder to output')
 	return parser.parse_args()
@@ -93,7 +93,7 @@ real_batch = data.next_batch(args.batch_size).to(device)
 draw_sample(None, real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_real.png'))
 draw_kde(real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_real.png'))
 
-criterion = nn.BCELoss()
+criterion = nn.BCEWithLogitsLoss()
 
 # train
 if args.mode == "train":
@@ -144,6 +144,8 @@ if args.mode == "train":
 			print('[%d/%d] Loss_D: %.4f Loss_G: %.4f'
 				% (i, args.niter, loss_d.item(), loss_g.item()))
 			draw_sample(fake_batch.detach().cpu().numpy(), real_batch.cpu().numpy(), args.scale, os.path.join(args.out_dir, 'batch_fake_{:05d}.png'.format(i)))
+			draw_kde(fake_batch.detach().cpu().numpy(), args.scale, os.path.join(args.out_dir, 'kde_fake_{:05d}.png'.format(i)))
+			
 			# Save model checkpoints
 			torch.save(generator.state_dict(), "%s/generator_%d.pth" % (args.ckpt_dir, i))
 			torch.save(discriminator.state_dict(), "%s/discriminator_%d.pth" % (args.ckpt_dir, i))
