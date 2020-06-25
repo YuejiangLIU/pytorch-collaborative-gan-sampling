@@ -17,7 +17,7 @@ pip install -r requirements.txt
 To train the GANs, run this command:
 
 ```bash
-python main.py --mode="train" --niter
+python main.py --mode="train" --niter=10000
 ```
 
 ## Sampling
