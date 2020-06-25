@@ -40,7 +40,7 @@ KDE |![](assets/kde_real.png) | ![](assets/kde_fake_01000.png) | ![](assets/kde_
 If you use this code for your research, please cite our paper.
 
 ```
-@article{liu2019collaborative,
+@inproceedings{liu2019collaborative,
   title={Collaborative Sampling in Generative Adversarial Networks},
   author={Liu, Yuejiang and Kothari, Parth and Alahi, Alexandre},
   booktitle={Thirty-first AAAI conference on artificial intelligence},
