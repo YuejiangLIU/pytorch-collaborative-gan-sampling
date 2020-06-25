@@ -1,3 +1,5 @@
-synthetic/out/
-synthetic/__pycache__/
-synthetic/ckpt/
+*out/
+*__pycache__/
+*ckpt/
+*script/
+*assets/
